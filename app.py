@@ -185,19 +185,18 @@ if all_summary_data:
     contas_file = st.file_uploader("Selecione o arquivo CSV da planilha de Contas a Pagar", type="csv", key="contas")
     
     if contas_file:
-        df_contas = pd.read_csv(contas_file, sep=";", dtype=str)
-        # A planilha deve conter as colunas obrigatórias
-        required_cols = ["Empresa", "Fornecedor", "Vencimento", "Valor", "Codigo"]
+        # Se o CSV usar vírgula como separador (como no seu arquivo), ajuste o sep para ","
+        df_contas = pd.read_csv(contas_file, sep=",", dtype=str)
+        # Verifica as colunas obrigatórias
+        required_cols = ["Empresa", "Fornecedor", "Data Vencimento", "Valor", "Código"]
         if not all(col in df_contas.columns for col in required_cols):
-            st.error("A planilha de contas a pagar deve conter as colunas: Empresa, Fornecedor, Vencimento, Valor e Codigo.")
+            st.error("A planilha de contas a pagar deve conter as colunas: Empresa, Fornecedor, Data Vencimento, Valor e Código.")
         else:
             # Padroniza e converte os dados para facilitar a conciliação
-            df_comprovantes_std = df_comprovantes.copy()
-            df_comprovantes_std = standardize_data(df_comprovantes_std, ["Empresa", "Fornecedor"])
-            df_comprovantes_std["Valor_std"] = df_comprovantes_std["Valor"].round(2)
-            
             df_contas_std = df_contas.copy()
             df_contas_std = standardize_data(df_contas_std, ["Empresa", "Fornecedor"])
+            # Garanta que a coluna 'Código' não possua espaços extras
+            df_contas_std["Código"] = df_contas_std["Código"].astype(str).str.strip()
             df_contas_std["Valor"] = df_contas_std["Valor"].str.replace(r"r\$\s*", "", regex=True).str.replace(",", ".").astype(float)
             df_contas_std["Valor_std"] = df_contas_std["Valor"].round(2)
             
@@ -208,11 +207,12 @@ if all_summary_data:
             match_method = st.selectbox("Selecione o método de correspondência:", options=["Padrão", "Fuzzy Wuzzy", "RapidFuzz"])
             
             if match_method == "Padrão":
+                # Utilize os nomes das colunas conforme estão: "Empresa", "Fornecedor" e "Valor_std"
                 df_conciliado = pd.merge(
                     df_contas_std,
                     df_comprovantes_std,
-                    left_on=["empresa", "fornecedor", "Valor_std"],
-                    right_on=["empresa", "fornecedor", "Valor_std"],
+                    left_on=["Empresa", "Fornecedor", "Valor_std"],
+                    right_on=["Empresa", "Fornecedor", "Valor_std"],
                     how="left",
                     suffixes=("_conta", "_comprovante")
                 )
