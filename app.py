@@ -110,39 +110,43 @@ def fuzzy_merge(df_contas, df_comprovantes, method="fuzzywuzzy", threshold=90):
 
 def resolve_ambiguities(df):
     """
-    Resolve ambiguidades entre contas a pagar e comprovantes.
-    Para cada conta (agrupada por "Código"), se houver mais de uma linha,
-    o usuário seleciona uma única linha que será mantida.
-    Em seguida, se um mesmo comprovante (campo "Número do Documento") estiver vinculado a várias contas,
-    o usuário também seleciona a linha correta.
-    Essa função retorna um DataFrame com uma linha única por conta.
+    Resolve ambiguidades para que cada conta (coluna "Código") seja representada por uma única linha.
+    Para cada grupo (mesmo "Código"), o usuário escolhe a linha correta.
+    Em seguida, para cada comprovante (coluna "Número do Documento") vinculado a várias contas, o usuário escolhe
+    qual linha manter para esse comprovante.
+    Retorna um DataFrame com uma linha por conta.
     """
-    resolved_rows = []
-    # Resolver ambiguidade por conta (Código)
+    # Passo 1: Resolver ambiguidade por conta (Código)
+    resolved_accounts = []
     for codigo, group in df.groupby("Código"):
         if len(group) == 1:
-            resolved_rows.append(group.iloc[[0]])
+            resolved_accounts.append(group.iloc[0])
         else:
             st.write(f"Ambiguidade para a conta com Código {codigo}:")
             options = {}
             for idx, row in group.iterrows():
                 date_op = pd.to_datetime(row["Data da Operação"], dayfirst=True, errors="coerce")
                 date_ven = pd.to_datetime(row["Data Vencimento"], dayfirst=True, errors="coerce")
-                option_str = (f"Doc: {row['Número do Documento']} | "
+                option_str = (f"Doc: {row['Número do Documento'] or 'None'} | "
                               f"Data Op: {date_op.strftime('%d/%m/%Y') if pd.notnull(date_op) else 'N/A'} | "
                               f"Data Ven: {date_ven.strftime('%d/%m/%Y') if pd.notnull(date_ven) else 'N/A'}")
-                options[option_str] = idx
-            chosen = st.selectbox(f"Selecione o comprovante correto para a conta {codigo}:", list(options.keys()), key=f"select_codigo_{codigo}")
-            chosen_idx = options[chosen]
-            resolved_rows.append(group.loc[[chosen_idx]])
-    df_resolved = pd.concat(resolved_rows, ignore_index=True)
-    
-    # Resolver ambiguidade por comprovante (Número do Documento)
-    resolved_rows_doc = []
-    grouped_doc = df_resolved[df_resolved["Número do Documento"].notna()].groupby("Número do Documento")
-    for doc, group in grouped_doc:
+                options[option_str] = row
+            chosen_option = st.selectbox(f"Selecione a linha correta para a conta {codigo}:", list(options.keys()), key=f"select_codigo_{codigo}")
+            chosen_row = options[chosen_option]
+            resolved_accounts.append(chosen_row)
+    df_resolved = pd.DataFrame(resolved_accounts)
+
+    # Passo 2: Resolver ambiguidade por comprovante (Número do Documento)
+    final_rows = []
+    # Separe as contas sem comprovante
+    for idx, row in df_resolved.iterrows():
+        if pd.isna(row["Número do Documento"]) or str(row["Número do Documento"]).strip() == "":
+            final_rows.append(row)
+    # Para as contas com comprovante, agrupe por "Número do Documento"
+    ambiguous = df_resolved[df_resolved["Número do Documento"].notna()]
+    for doc, group in ambiguous.groupby("Número do Documento"):
         if len(group) == 1:
-            resolved_rows_doc.append(group)
+            final_rows.append(group.iloc[0])
         else:
             st.write(f"Ambiguidade para o comprovante {doc} associado a várias contas:")
             options = {}
@@ -152,17 +156,11 @@ def resolve_ambiguities(df):
                 option_str = (f"Código: {row['Código']} | "
                               f"Data Ven: {date_ven.strftime('%d/%m/%Y') if pd.notnull(date_ven) else 'N/A'} | "
                               f"Data Op: {date_op.strftime('%d/%m/%Y') if pd.notnull(date_op) else 'N/A'}")
-                options[option_str] = idx
-            chosen = st.selectbox(f"Selecione a conta correta para o comprovante {doc}:", list(options.keys()), key=f"select_doc_{doc}")
-            chosen_idx = options[chosen]
-            resolved_rows_doc.append(group.loc[[chosen_idx]])
-    if resolved_rows_doc:
-        df_resolved_doc = pd.concat(resolved_rows_doc, ignore_index=True)
-        # Adiciona as linhas que não possuem comprovante
-        df_non_ambiguous = df_resolved[df_resolved["Número do Documento"].isna()]
-        df_final = pd.concat([df_resolved_doc, df_non_ambiguous], ignore_index=True)
-    else:
-        df_final = df_resolved
+                options[option_str] = row
+            chosen_option = st.selectbox(f"Selecione a conta correta para o comprovante {doc}:", list(options.keys()), key=f"select_doc_{doc}")
+            chosen_row = options[chosen_option]
+            final_rows.append(chosen_row)
+    df_final = pd.DataFrame(final_rows)
     return df_final
 
 # --- INTERFACE DO APLICATIVO ---
@@ -298,7 +296,7 @@ if all_summary_data:
                                file_name="comprovantes_sem_conta.csv",
                                mime="text/csv",
                                key="download_comprovantes_sem_conta")
-
+            
 # 7. Download dos PDFs individuais dos comprovantes
 if all_transactions:
     st.subheader("Download dos Comprovantes Individuais (PDF)")
