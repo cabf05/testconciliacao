@@ -8,7 +8,7 @@ from io import BytesIO
 from fuzzywuzzy import fuzz as fuzzywuzzy_fuzz
 from rapidfuzz import fuzz as rapidfuzz_fuzz
 
-# --- FUNÇÕES DE EXTRAÇÃO E SALVAMENTO DE COMPROVANTES ---
+# --- EXTRAÇÃO DE COMPROVANTES ---
 
 def extract_transactions(pdf_document):
     """
@@ -62,10 +62,10 @@ def save_transaction_pdfs(pdf_document, transactions):
         files.append((file_name, pdf_bytes))
     return files
 
-# --- FUNÇÕES DE PADRONIZAÇÃO E CONCILIAÇÃO ---
+# --- PADRONIZAÇÃO E CONCILIAÇÃO ---
 
 def standardize_data(df, columns):
-    """Padroniza as colunas: converte para texto em minúsculo e remove espaços extras."""
+    """Converte as colunas para minúsculas e remove espaços em branco."""
     for col in columns:
         df[col] = df[col].astype(str).str.lower().str.strip()
     return df
@@ -73,7 +73,7 @@ def standardize_data(df, columns):
 def fuzzy_merge(df_contas, df_comprovantes, method="fuzzywuzzy", threshold=90):
     """
     Realiza a correspondência fuzzy entre a planilha de contas a pagar e os comprovantes.
-    Compara as colunas Empresa e Fornecedor e filtra candidatos com base no Valor_std.
+    Filtra candidatos com base em Valor_std e compara as colunas Empresa e Fornecedor.
     """
     matched_rows = []
     for idx, conta in df_contas.iterrows():
@@ -108,64 +108,46 @@ def fuzzy_merge(df_contas, df_comprovantes, method="fuzzywuzzy", threshold=90):
                 matched_rows.append(row)
     return pd.DataFrame(matched_rows)
 
-def resolve_ambiguities(df):
+def resolve_ambiguous_receipts(df):
     """
-    Resolve ambiguidades para que cada conta (coluna "Código") seja representada por uma única linha.
-    Para cada grupo (mesmo "Código"), o usuário escolhe a linha correta.
-    Em seguida, para cada comprovante (coluna "Número do Documento") vinculado a várias contas, o usuário escolhe
-    qual linha manter para esse comprovante.
-    Retorna um DataFrame com uma linha por conta.
+    Cria duas novas colunas:
+      - "Possível_Cod_Comprovante": igual ao valor atual de "Número do Documento"
+      - "Cod_Comprovante": que será preenchido com o código real de vinculação, conforme decisão do usuário.
+      
+    Se um mesmo código (não nulo) aparecer em várias linhas, é considerada ambiguidade.
+    Para cada código ambíguo, o usuário escolhe a conta correta para aquele comprovante.
+    Para as linhas que não forem escolhidas, "Cod_Comprovante" fica vazia.
     """
-    # Passo 1: Resolver ambiguidade por conta (Código)
-    resolved_accounts = []
-    for codigo, group in df.groupby("Código"):
-        if len(group) == 1:
-            resolved_accounts.append(group.iloc[0])
-        else:
-            st.write(f"Ambiguidade para a conta com Código {codigo}:")
-            options = {}
-            for idx, row in group.iterrows():
-                date_op = pd.to_datetime(row["Data da Operação"], dayfirst=True, errors="coerce")
-                date_ven = pd.to_datetime(row["Data Vencimento"], dayfirst=True, errors="coerce")
-                option_str = (f"Doc: {row['Número do Documento'] or 'None'} | "
-                              f"Data Op: {date_op.strftime('%d/%m/%Y') if pd.notnull(date_op) else 'N/A'} | "
-                              f"Data Ven: {date_ven.strftime('%d/%m/%Y') if pd.notnull(date_ven) else 'N/A'}")
-                options[option_str] = row
-            chosen_option = st.selectbox(f"Selecione a linha correta para a conta {codigo}:", list(options.keys()), key=f"select_codigo_{codigo}")
-            chosen_row = options[chosen_option]
-            resolved_accounts.append(chosen_row)
-    df_resolved = pd.DataFrame(resolved_accounts)
+    df = df.copy()
+    # Cria a coluna de possível código a partir do merge
+    df["Possível_Cod_Comprovante"] = df["Número do Documento"]
+    # Inicializa a coluna final igual à possível
+    df["Cod_Comprovante"] = df["Possível_Cod_Comprovante"]
+    
+    # Identifica códigos ambíguos (não nulos) que aparecem em mais de uma linha
+    ambig_codes = df["Possível_Cod_Comprovante"].dropna().value_counts()
+    ambig_codes = ambig_codes[ambig_codes > 1].index.tolist()
+    
+    for code in ambig_codes:
+        group = df[df["Possível_Cod_Comprovante"] == code]
+        st.write(f"Ambiguidade para o comprovante {code}:")
+        options = {}
+        # Exiba informações úteis para a escolha (por exemplo, Código da conta, Empresa, Fornecedor, Data Vencimento)
+        for idx, row in group.iterrows():
+            option_str = (f"Código da conta: {row['Código']} | Empresa: {row['Empresa'].title()} | "
+                          f"Fornecedor: {row['Fornecedor'].title()} | Data Vencimento: {row['Data Vencimento']}")
+            options[option_str] = idx
+        chosen_option = st.selectbox(f"Selecione a conta correta para o comprovante {code}:", list(options.keys()), key=f"amb_{code}")
+        chosen_idx = options[chosen_option]
+        # Para todas as linhas do grupo que NÃO foram escolhidas, zere a coluna Cod_Comprovante
+        for idx in group.index:
+            if idx != chosen_idx:
+                df.at[idx, "Cod_Comprovante"] = ""
+    return df
 
-    # Passo 2: Resolver ambiguidade por comprovante (Número do Documento)
-    final_rows = []
-    # Separe as contas sem comprovante
-    for idx, row in df_resolved.iterrows():
-        if pd.isna(row["Número do Documento"]) or str(row["Número do Documento"]).strip() == "":
-            final_rows.append(row)
-    # Para as contas com comprovante, agrupe por "Número do Documento"
-    ambiguous = df_resolved[df_resolved["Número do Documento"].notna()]
-    for doc, group in ambiguous.groupby("Número do Documento"):
-        if len(group) == 1:
-            final_rows.append(group.iloc[0])
-        else:
-            st.write(f"Ambiguidade para o comprovante {doc} associado a várias contas:")
-            options = {}
-            for idx, row in group.iterrows():
-                date_op = pd.to_datetime(row["Data da Operação"], dayfirst=True, errors="coerce")
-                date_ven = pd.to_datetime(row["Data Vencimento"], dayfirst=True, errors="coerce")
-                option_str = (f"Código: {row['Código']} | "
-                              f"Data Ven: {date_ven.strftime('%d/%m/%Y') if pd.notnull(date_ven) else 'N/A'} | "
-                              f"Data Op: {date_op.strftime('%d/%m/%Y') if pd.notnull(date_op) else 'N/A'}")
-                options[option_str] = row
-            chosen_option = st.selectbox(f"Selecione a conta correta para o comprovante {doc}:", list(options.keys()), key=f"select_doc_{doc}")
-            chosen_row = options[chosen_option]
-            final_rows.append(chosen_row)
-    df_final = pd.DataFrame(final_rows)
-    return df_final
+# --- FLUXO PRINCIPAL DO APP ---
 
-# --- INTERFACE DO APLICATIVO ---
-
-st.title("🔎 Conciliação de Pagamentos - Verificação de Datas e Ambiguidades")
+st.title("🔎 Conciliação de Pagamentos")
 
 # 1. Upload dos PDFs de comprovantes
 st.subheader("Upload de PDFs de Comprovantes Bancários")
@@ -222,7 +204,7 @@ if all_summary_data:
             st.subheader("Resumo da Planilha de Contas a Pagar")
             st.dataframe(df_contas_std)
             
-            # 3. Seleção do método de conciliação
+            # 3. Seleção do método de correspondência
             match_method = st.selectbox("Selecione o método de correspondência:", options=["Padrão", "Fuzzy Wuzzy", "RapidFuzz"])
             if match_method == "Padrão":
                 df_conciliado = pd.merge(
@@ -240,62 +222,63 @@ if all_summary_data:
                 elif match_method == "RapidFuzz":
                     df_conciliado = fuzzy_merge(df_contas_std, df_comprovantes_std, method="rapidfuzz", threshold=threshold)
             
+            # Converter "Data da Operação" para datetime (se aplicável)
             df_conciliado["Data da Operação"] = pd.to_datetime(df_conciliado["Data da Operação"], dayfirst=True, errors="coerce")
             df_conciliado["Data_Match"] = df_conciliado.apply(
                 lambda row: row["Data Vencimento"] == row["Data da Operação"]
                 if pd.notnull(row["Data Vencimento"]) and pd.notnull(row["Data da Operação"]) else False, axis=1
             )
             
-            # 4. Resolver ambiguidades
-            duplicate_mask_codigo = df_conciliado.duplicated(subset=["Código"], keep=False)
-            duplicate_mask_doc = df_conciliado["Número do Documento"].notna() & df_conciliado.duplicated(subset=["Número do Documento"], keep=False)
-            if duplicate_mask_codigo.any() or duplicate_mask_doc.any():
-                st.write("Foram encontradas ambiguidades na conciliação. Por favor, resolva:")
-                df_conciliado_final = resolve_ambiguities(df_conciliado)
+            # 4. Na conciliação inicial, crie a coluna "Possível_Cod_Comprovante"
+            # Essa coluna será igual a "Número do Documento" (pode haver duplicidade)
+            df_conciliado["Possível_Cod_Comprovante"] = df_conciliado["Número do Documento"]
+            # Crie também a coluna "Cod_Comprovante", que inicialmente recebe o mesmo valor
+            df_conciliado["Cod_Comprovante"] = df_conciliado["Possível_Cod_Comprovante"]
+            
+            # Se houver ambiguidade (ou seja, o mesmo comprovante para mais de uma conta), resolva:
+            if df_conciliado["Possível_Cod_Comprovante"].dropna().duplicated().any():
+                st.write("Foram detectadas ambiguidades na vinculação dos comprovantes. Por favor, resolva:")
+                df_conciliado_final = resolve_ambiguous_receipts(df_conciliado)
             else:
                 df_conciliado_final = df_conciliado.copy()
             
-            st.subheader("Tabela Conciliada Final")
+            st.subheader("Tabela de Conciliação Final")
             st.dataframe(df_conciliado_final)
             csv_conciliado = df_conciliado_final.to_csv(index=False, sep=";").encode()
-            st.download_button("Baixar Tabela Conciliada Final (CSV)",
+            st.download_button("Baixar Tabela de Conciliação Final (CSV)",
                                data=csv_conciliado,
                                file_name="tabela_conciliada_final.csv",
                                mime="text/csv",
                                key="download_conciliado_final")
             
-            st.subheader("📌 Depuração: Valores na coluna 'Número do Documento'")
-            st.write(df_conciliado_final["Número do Documento"].unique())
-            
-            # 5. Listar contas a pagar sem comprovante
-            df_contas_sem_comprovante = df_conciliado_final[
-                df_conciliado_final["Número do Documento"].isna() | 
-                (df_conciliado_final["Número do Documento"].astype(str).str.strip().eq("")) |
-                (df_conciliado_final["Número do Documento"].astype(str).str.strip().eq("nan"))
+            # 5. Contas a Pagar sem Conciliação: linhas em que "Cod_Comprovante" está vazio
+            df_contas_sem = df_conciliado_final[
+                df_conciliado_final["Cod_Comprovante"].isna() |
+                (df_conciliado_final["Cod_Comprovante"].astype(str).str.strip() == "")
             ]
-            st.subheader("Contas a Pagar SEM Comprovante")
-            if df_contas_sem_comprovante.empty:
-                st.warning("🚨 Nenhuma conta a pagar sem comprovante foi encontrada.")
+            st.subheader("Contas a Pagar sem Conciliação")
+            if df_contas_sem.empty:
+                st.warning("🚨 Nenhuma conta a pagar sem conciliação encontrada.")
             else:
-                st.dataframe(df_contas_sem_comprovante)
-                csv_contas_sem = df_contas_sem_comprovante.to_csv(index=False, sep=";").encode()
-                st.download_button("Baixar Contas SEM Comprovante (CSV)",
+                st.dataframe(df_contas_sem)
+                csv_contas_sem = df_contas_sem.to_csv(index=False, sep=";").encode()
+                st.download_button("Baixar Contas a Pagar sem Conciliação (CSV)",
                                    data=csv_contas_sem,
-                                   file_name="contas_sem_comprovante.csv",
+                                   file_name="contas_sem_conciliacao.csv",
                                    mime="text/csv",
                                    key="download_contas_sem")
             
-            # 6. Listar comprovantes sem vínculo
-            linked_doc_numbers = df_conciliado_final["Número do Documento"].dropna().unique()
-            df_receipts_sem_conta = df_comprovantes[~df_comprovantes["Número do Documento"].isin(linked_doc_numbers)]
-            st.subheader("Comprovantes SEM Correspondência com Contas a Pagar")
-            st.dataframe(df_receipts_sem_conta)
-            csv_receipts_sem = df_receipts_sem_conta.to_csv(index=False, sep=";").encode()
-            st.download_button("Baixar Comprovantes SEM Contas (CSV)",
+            # 6. Comprovantes sem Conciliação: comprovantes extraídos que não foram vinculados a nenhuma conta
+            linked_codes = df_conciliado_final["Cod_Comprovante"].dropna().unique()
+            df_receipts_sem = df_comprovantes[~df_comprovantes["Número do Documento"].isin(linked_codes)]
+            st.subheader("Comprovantes sem Conciliação")
+            st.dataframe(df_receipts_sem)
+            csv_receipts_sem = df_receipts_sem.to_csv(index=False, sep=";").encode()
+            st.download_button("Baixar Comprovantes sem Conciliação (CSV)",
                                data=csv_receipts_sem,
-                               file_name="comprovantes_sem_conta.csv",
+                               file_name="comprovantes_sem_conciliacao.csv",
                                mime="text/csv",
-                               key="download_comprovantes_sem_conta")
+                               key="download_comprovantes_sem")
             
 # 7. Download dos PDFs individuais dos comprovantes
 if all_transactions:
