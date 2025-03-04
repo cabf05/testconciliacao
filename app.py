@@ -279,8 +279,8 @@ if all_summary_data:
     (df_conciliado_final["Número do Documento"].astype(str).str.strip().isna())
 ]
             st.subheader("📌 Contas a Pagar SEM Comprovante")
-if df_contas_sem_comprovante.empty:
-    st.warning("🚨 Nenhuma conta a pagar sem comprovante foi encontrada.")
+            if df_contas_sem_comprovante.empty:
+            st.warning("🚨 Nenhuma conta a pagar sem comprovante foi encontrada.")
 else:
     st.dataframe(df_contas_sem_comprovante)
     csv_contas_sem = df_contas_sem_comprovante.to_csv(index=False, sep=";").encode()
@@ -290,7 +290,6 @@ else:
                        mime="text/csv",
                        key="download_contas_sem")
 
-            
             # 6. Listar comprovantes sem vínculo
             linked_doc_numbers = df_conciliado_final["Número do Documento"].dropna().unique()
             df_receipts_sem_conta = df_comprovantes[~df_comprovantes["Número do Documento"].isin(linked_doc_numbers)]
