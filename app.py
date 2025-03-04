@@ -15,7 +15,7 @@ def extract_transactions(pdf_document):
     Extrai os dados dos comprovantes de cada página do PDF.
     Retorna uma lista de tuplas (número da página, nome do arquivo) e 
     uma lista de dicionários para o resumo.
-    Utiliza extração individual para cada campo, tornando o processo mais robusto.
+    A extração é feita com buscas individuais para cada campo, tornando o processo mais robusto.
     """
     transactions = []
     summary_data = []
@@ -24,22 +24,23 @@ def extract_transactions(pdf_document):
         page = pdf_document[page_num]
         text = page.get_text("text")
         
-        # Extração individual dos campos:
+        # Extração individual dos campos usando padrões não gananciosos:
         data_operacao_match = re.search(r"Data da operação:\s*(\d{2}/\d{2}/\d{4})", text)
-        controle_match = re.search(r"N° de controle:\s*(\d+)", text)
+        documento_match = re.search(r"Documento:\s*(\d+)", text)
         empresa_match = re.search(r"Empresa:\s*(.*?)\s*\|", text)
-        favorecido_match = re.search(r"Nome do favorecido:\s*(.*)", text)
-        valor_match = re.search(r"Valor\s*R\$\s*([\d,.]+)", text)
+        favorecido_match = re.search(r"Nome do favorecido:\s*(.*?)\n", text)
+        valor_match = re.search(r"Valor\s*R\$\s*([\d.,]+)", text)
         
-        if data_operacao_match and controle_match and empresa_match and favorecido_match and valor_match:
+        if data_operacao_match and documento_match and empresa_match and favorecido_match and valor_match:
             data_operacao = data_operacao_match.group(1).strip()
-            numero_documento = controle_match.group(1).strip()
+            numero_documento = documento_match.group(1).strip()
             empresa = empresa_match.group(1).strip()
             fornecedor = favorecido_match.group(1).strip()
-            valor_str = valor_match.group(1).strip().replace(",", ".")
+            # Remove separador de milhar e troca vírgula decimal
+            valor_str = valor_match.group(1).strip().replace(".", "").replace(",", ".")
             try:
                 valor = float(valor_str)
-            except:
+            except Exception:
                 valor = 0.0
             
             file_name = f"{empresa.replace(' ', '_')}_para_{fornecedor.replace(' ', '_')}_{data_operacao.replace('/', '-')}_R${valor:.2f}.pdf"
@@ -171,7 +172,13 @@ if all_summary_data:
     st.subheader("Resumo dos Comprovantes Bancários")
     st.dataframe(df_comprovantes)
     csv_comprovantes = df_comprovantes.to_csv(index=False, sep=";").encode()
-    st.download_button("Baixar Resumo dos Comprovantes (CSV)", data=csv_comprovantes, file_name="resumo_comprovantes.csv", mime="text/csv")
+    st.download_button(
+        "Baixar Resumo dos Comprovantes (CSV)",
+        data=csv_comprovantes,
+        file_name="resumo_comprovantes.csv",
+        mime="text/csv",
+        key="download_csv_comprovantes"
+    )
 
     # 2. Upload da planilha de contas a pagar
     st.subheader("Upload da Planilha de Contas a Pagar")
@@ -201,7 +208,14 @@ if all_summary_data:
             match_method = st.selectbox("Selecione o método de correspondência:", options=["Padrão", "Fuzzy Wuzzy", "RapidFuzz"])
             
             if match_method == "Padrão":
-                df_conciliado = pd.merge(df_contas_std, df_comprovantes_std, left_on=["empresa", "fornecedor", "Valor_std"], right_on=["empresa", "fornecedor", "Valor_std"], how="left", suffixes=("_conta", "_comprovante"))
+                df_conciliado = pd.merge(
+                    df_contas_std,
+                    df_comprovantes_std,
+                    left_on=["empresa", "fornecedor", "Valor_std"],
+                    right_on=["empresa", "fornecedor", "Valor_std"],
+                    how="left",
+                    suffixes=("_conta", "_comprovante")
+                )
             else:
                 threshold = st.slider("Defina o limiar para correspondência fuzzy:", min_value=50, max_value=100, value=90)
                 if match_method == "Fuzzy Wuzzy":
@@ -212,7 +226,13 @@ if all_summary_data:
             st.subheader("Tabela Conciliada Inicial")
             st.dataframe(df_conciliado)
             csv_conciliado = df_conciliado.to_csv(index=False, sep=";").encode()
-            st.download_button("Baixar Tabela Conciliada Inicial (CSV)", data=csv_conciliado, file_name="tabela_conciliada_inicial.csv", mime="text/csv")
+            st.download_button(
+                "Baixar Tabela Conciliada Inicial (CSV)",
+                data=csv_conciliado,
+                file_name="tabela_conciliada_inicial.csv",
+                mime="text/csv",
+                key="download_conciliado_inicial"
+            )
             
             # 4. Resolução de duplicidades (se houver mais de um comprovante para o mesmo 'Código')
             duplicate_mask = df_conciliado.duplicated(subset=["Código"], keep=False)
@@ -226,30 +246,51 @@ if all_summary_data:
             st.subheader("Tabela Conciliada Final (após resolução)")
             st.dataframe(df_resolvido)
             csv_conciliado_final = df_resolvido.to_csv(index=False, sep=";").encode()
-            st.download_button("Baixar Tabela Conciliada Final (CSV)", data=csv_conciliado_final, file_name="tabela_conciliada_final.csv", mime="text/csv")
+            st.download_button(
+                "Baixar Tabela Conciliada Final (CSV)",
+                data=csv_conciliado_final,
+                file_name="tabela_conciliada_final.csv",
+                mime="text/csv",
+                key="download_conciliado_final"
+            )
             
             # 5. Listar contas a pagar sem comprovante e comprovantes sem vínculo
             df_contas_sem_comprovante = df_conciliado[df_conciliado["Número do Documento"].isna()]
             st.subheader("Contas a Pagar SEM Comprovante")
             st.dataframe(df_contas_sem_comprovante)
             csv_contas_sem = df_contas_sem_comprovante.to_csv(index=False, sep=";").encode()
-            st.download_button("Baixar Contas SEM Comprovante (CSV)", data=csv_contas_sem, file_name="contas_sem_comprovante.csv", mime="text/csv")
+            st.download_button(
+                "Baixar Contas SEM Comprovante (CSV)",
+                data=csv_contas_sem,
+                file_name="contas_sem_comprovante.csv",
+                mime="text/csv",
+                key="download_contas_sem"
+            )
             
             linked_doc_numbers = df_resolvido["Número do Documento"].dropna().unique()
             df_receipts_sem_conta = df_comprovantes[~df_comprovantes["Número do Documento"].isin(linked_doc_numbers)]
             st.subheader("Comprovantes SEM Correspondência com Contas a Pagar")
             st.dataframe(df_receipts_sem_conta)
             csv_receipts_sem = df_receipts_sem_conta.to_csv(index=False, sep=";").encode()
-            st.download_button("Baixar Comprovantes SEM Contas (CSV)", data=csv_receipts_sem, file_name="comprovantes_sem_conta.csv", mime="text/csv")
+            st.download_button(
+                "Baixar Comprovantes SEM Contas (CSV)",
+                data=csv_receipts_sem,
+                file_name="comprovantes_sem_conta.csv",
+                mime="text/csv",
+                key="download_comprovantes_sem_conta"
+            )
 
 # 6. Download dos PDFs individuais dos comprovantes
 if all_transactions:
     st.subheader("Download dos Comprovantes Individuais (PDF)")
+    pdf_index = 0
     for pdf_document, transactions in all_transactions:
         for file_name, pdf_bytes in save_transaction_pdfs(pdf_document, transactions):
             st.download_button(
                 label=f"Baixar {file_name}",
                 data=pdf_bytes,
                 file_name=file_name,
-                mime="application/pdf"
+                mime="application/pdf",
+                key=f"download_pdf_{pdf_index}"
             )
+            pdf_index += 1
