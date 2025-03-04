@@ -14,7 +14,6 @@ def extract_transactions(pdf_document):
     """
     Extrai os dados dos comprovantes de cada página do PDF.
     Retorna uma lista de tuplas (número da página, nome do arquivo) e uma lista de dicionários para o resumo.
-    A extração é feita com buscas individuais para cada campo, tornando o processo mais robusto.
     """
     transactions = []
     summary_data = []
@@ -112,75 +111,59 @@ def fuzzy_merge(df_contas, df_comprovantes, method="fuzzywuzzy", threshold=90):
 def resolve_ambiguities(df):
     """
     Resolve ambiguidades entre contas a pagar e comprovantes.
-    - Se houver múltiplos comprovantes para uma conta a pagar, o usuário deve escolher um.
-    - Se houver um comprovante vinculado a várias contas, o usuário escolhe qual conta a pagar usar.
-    - Contas que não forem selecionadas permanecem no relatório SEM COMPROVANTE.
+    Para cada conta (agrupada por "Código"), se houver mais de uma linha,
+    o usuário seleciona uma única linha que será mantida.
+    Em seguida, se um mesmo comprovante (campo "Número do Documento") estiver vinculado a várias contas,
+    o usuário também seleciona a linha correta.
+    Essa função retorna um DataFrame com uma linha única por conta.
     """
     resolved_rows = []
-    grouped_codigo = df.groupby("Código")
-
-    for codigo, group in grouped_codigo:
+    # Resolver ambiguidade por conta (Código)
+    for codigo, group in df.groupby("Código"):
         if len(group) == 1:
-            resolved_rows.append(group)
+            resolved_rows.append(group.iloc[[0]])
         else:
             st.write(f"Ambiguidade para a conta com Código {codigo}:")
             options = {}
             for idx, row in group.iterrows():
                 date_op = pd.to_datetime(row["Data da Operação"], dayfirst=True, errors="coerce")
                 date_ven = pd.to_datetime(row["Data Vencimento"], dayfirst=True, errors="coerce")
-
                 option_str = (f"Doc: {row['Número do Documento']} | "
                               f"Data Op: {date_op.strftime('%d/%m/%Y') if pd.notnull(date_op) else 'N/A'} | "
                               f"Data Ven: {date_ven.strftime('%d/%m/%Y') if pd.notnull(date_ven) else 'N/A'}")
-
                 options[option_str] = idx
-
             chosen = st.selectbox(f"Selecione o comprovante correto para a conta {codigo}:", list(options.keys()), key=f"select_codigo_{codigo}")
             chosen_idx = options[chosen]
-
-            # **Manter a conta não selecionada, mas zerar os dados do comprovante**
-            for idx, row in group.iterrows():
-                if idx == chosen_idx:
-                    resolved_rows.append(group.loc[[idx]])
-                else:
-                    row["Número do Documento"] = None
-                    row["Data da Operação"] = None
-                    row["Arquivo PDF"] = None
-                    resolved_rows.append(pd.DataFrame([row]))
-
+            resolved_rows.append(group.loc[[chosen_idx]])
     df_resolved = pd.concat(resolved_rows, ignore_index=True)
-
-    # Resolver ambiguidade para um comprovante associado a várias contas
+    
+    # Resolver ambiguidade por comprovante (Número do Documento)
+    resolved_rows_doc = []
     grouped_doc = df_resolved[df_resolved["Número do Documento"].notna()].groupby("Número do Documento")
-
     for doc, group in grouped_doc:
-        if len(group) > 1:
+        if len(group) == 1:
+            resolved_rows_doc.append(group)
+        else:
             st.write(f"Ambiguidade para o comprovante {doc} associado a várias contas:")
             options = {}
             for idx, row in group.iterrows():
                 date_op = pd.to_datetime(row["Data da Operação"], dayfirst=True, errors="coerce")
                 date_ven = pd.to_datetime(row["Data Vencimento"], dayfirst=True, errors="coerce")
-
                 option_str = (f"Código: {row['Código']} | "
                               f"Data Ven: {date_ven.strftime('%d/%m/%Y') if pd.notnull(date_ven) else 'N/A'} | "
                               f"Data Op: {date_op.strftime('%d/%m/%Y') if pd.notnull(date_op) else 'N/A'}")
-
                 options[option_str] = idx
-
             chosen = st.selectbox(f"Selecione a conta correta para o comprovante {doc}:", list(options.keys()), key=f"select_doc_{doc}")
             chosen_idx = options[chosen]
-
-            # **Manter contas não selecionadas, mas remover o vínculo com o comprovante**
-            for idx, row in group.iterrows():
-                if idx == chosen_idx:
-                    continue  # Mantém a linha selecionada
-                else:
-                    row["Número do Documento"] = None
-                    row["Data da Operação"] = None
-                    row["Arquivo PDF"] = None
-                    resolved_rows.append(pd.DataFrame([row]))
-
-    return pd.concat(resolved_rows, ignore_index=True)
+            resolved_rows_doc.append(group.loc[[chosen_idx]])
+    if resolved_rows_doc:
+        df_resolved_doc = pd.concat(resolved_rows_doc, ignore_index=True)
+        # Adiciona as linhas que não possuem comprovante
+        df_non_ambiguous = df_resolved[df_resolved["Número do Documento"].isna()]
+        df_final = pd.concat([df_resolved_doc, df_non_ambiguous], ignore_index=True)
+    else:
+        df_final = df_resolved
+    return df_final
 
 # --- INTERFACE DO APLICATIVO ---
 
@@ -227,13 +210,11 @@ if all_summary_data:
     contas_file = st.file_uploader("Selecione o arquivo CSV da planilha de Contas a Pagar", type="csv", key="contas")
     
     if contas_file:
-        # Ajuste o separador conforme necessário (aqui usamos vírgula)
         df_contas = pd.read_csv(contas_file, sep=",", dtype=str)
         required_cols = ["Empresa", "Fornecedor", "Data Vencimento", "Valor", "Código"]
         if not all(col in df_contas.columns for col in required_cols):
             st.error("A planilha de contas a pagar deve conter as colunas: Empresa, Fornecedor, Data Vencimento, Valor e Código.")
         else:
-            # Padronização e conversão dos dados
             df_contas_std = df_contas.copy()
             df_contas_std = standardize_data(df_contas_std, ["Empresa", "Fornecedor"])
             df_contas_std["Código"] = df_contas_std["Código"].astype(str).str.strip()
@@ -261,15 +242,13 @@ if all_summary_data:
                 elif match_method == "RapidFuzz":
                     df_conciliado = fuzzy_merge(df_contas_std, df_comprovantes_std, method="rapidfuzz", threshold=threshold)
             
-            # Converter "Data da Operação" para datetime
             df_conciliado["Data da Operação"] = pd.to_datetime(df_conciliado["Data da Operação"], dayfirst=True, errors="coerce")
-            # Criar coluna que verifica se as datas coincidem
             df_conciliado["Data_Match"] = df_conciliado.apply(
                 lambda row: row["Data Vencimento"] == row["Data da Operação"]
                 if pd.notnull(row["Data Vencimento"]) and pd.notnull(row["Data da Operação"]) else False, axis=1
             )
             
-            # 4. Resolver ambiguidades (mesmo comprovante para mais de uma conta ou vice-versa)
+            # 4. Resolver ambiguidades
             duplicate_mask_codigo = df_conciliado.duplicated(subset=["Código"], keep=False)
             duplicate_mask_doc = df_conciliado["Número do Documento"].notna() & df_conciliado.duplicated(subset=["Número do Documento"], keep=False)
             if duplicate_mask_codigo.any() or duplicate_mask_doc.any():
@@ -278,41 +257,36 @@ if all_summary_data:
             else:
                 df_conciliado_final = df_conciliado.copy()
             
-            st.subheader("Tabela Conciliada Inicial")
+            st.subheader("Tabela Conciliada Final")
             st.dataframe(df_conciliado_final)
             csv_conciliado = df_conciliado_final.to_csv(index=False, sep=";").encode()
-            st.download_button("Baixar Tabela Conciliada Inicial (CSV)",
+            st.download_button("Baixar Tabela Conciliada Final (CSV)",
                                data=csv_conciliado,
-                               file_name="tabela_conciliada_inicial.csv",
+                               file_name="tabela_conciliada_final.csv",
                                mime="text/csv",
-                               key="download_conciliado_inicial")
+                               key="download_conciliado_final")
             
-            st.subheader("📌 Depuração: Exibir a tabela conciliada final")
-            st.write("Número de linhas na tabela conciliada:", df_conciliado_final.shape[0])
-            st.dataframe(df_conciliado_final)
-            
-            st.subheader("📌 Valores únicos na coluna 'Número do Documento'")
+            st.subheader("📌 Depuração: Valores na coluna 'Número do Documento'")
             st.write(df_conciliado_final["Número do Documento"].unique())
             
-            # 5. Listar contas a pagar sem comprovante (verifica nulos ou strings vazias)
+            # 5. Listar contas a pagar sem comprovante
             df_contas_sem_comprovante = df_conciliado_final[
-            df_conciliado_final["Número do Documento"].isna() | 
-            (df_conciliado_final["Número do Documento"].astype(str).str.strip() == "nan") |
-            (df_conciliado_final["Número do Documento"].astype(str).str.strip() == "") |
-            (df_conciliado_final["Número do Documento"].astype(str).str.strip().isna())
+                df_conciliado_final["Número do Documento"].isna() | 
+                (df_conciliado_final["Número do Documento"].astype(str).str.strip().eq("")) |
+                (df_conciliado_final["Número do Documento"].astype(str).str.strip().eq("nan"))
             ]
-            st.subheader("📌 Contas a Pagar SEM Comprovante")
+            st.subheader("Contas a Pagar SEM Comprovante")
             if df_contas_sem_comprovante.empty:
                 st.warning("🚨 Nenhuma conta a pagar sem comprovante foi encontrada.")
             else:
                 st.dataframe(df_contas_sem_comprovante)
                 csv_contas_sem = df_contas_sem_comprovante.to_csv(index=False, sep=";").encode()
                 st.download_button("Baixar Contas SEM Comprovante (CSV)",
-                       data=csv_contas_sem,
-                       file_name="contas_sem_comprovante.csv",
-                       mime="text/csv",
-                       key="download_contas_sem")
-
+                                   data=csv_contas_sem,
+                                   file_name="contas_sem_comprovante.csv",
+                                   mime="text/csv",
+                                   key="download_contas_sem")
+            
             # 6. Listar comprovantes sem vínculo
             linked_doc_numbers = df_conciliado_final["Número do Documento"].dropna().unique()
             df_receipts_sem_conta = df_comprovantes[~df_comprovantes["Número do Documento"].isin(linked_doc_numbers)]
