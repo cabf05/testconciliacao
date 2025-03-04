@@ -295,7 +295,6 @@ st.download_button(
     mime="text/csv",
     key="download_contas_sem"
 )
-
             
             linked_doc_numbers = df_conciliado_final["Número do Documento"].dropna().unique()
             df_receipts_sem_conta = df_comprovantes[~df_comprovantes["Número do Documento"].isin(linked_doc_numbers)]
