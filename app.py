@@ -294,8 +294,7 @@ st.download_button(
     file_name="contas_sem_comprovante.csv",
     mime="text/csv",
     key="download_contas_sem"
-)
-            
+)            
             linked_doc_numbers = df_conciliado_final["Número do Documento"].dropna().unique()
             df_receipts_sem_conta = df_comprovantes[~df_comprovantes["Número do Documento"].isin(linked_doc_numbers)]
             st.subheader("Comprovantes SEM Correspondência com Contas a Pagar")
