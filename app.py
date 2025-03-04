@@ -111,14 +111,14 @@ def fuzzy_merge(df_contas, df_comprovantes, method="fuzzywuzzy", threshold=90):
 
 def resolve_ambiguities(df):
     """
-    Resolve ambiguidades:
-    - Para contas a pagar (identificadas por "Código") que receberam mais de um comprovante.
-    - Para comprovantes (identificados por "Número do Documento") associados a várias contas.
-    O usuário deverá escolher a correspondência correta para cada grupo ambíguo.
+    Resolve ambiguidades entre contas a pagar e comprovantes.
+    - Se houver múltiplos comprovantes para uma conta a pagar, o usuário deve escolher um.
+    - Se houver um comprovante vinculado a várias contas, o usuário escolhe qual conta a pagar usar.
+    - Contas que não forem selecionadas permanecem no relatório SEM COMPROVANTE.
     """
     resolved_rows = []
-    # Resolver por "Código" (conta com múltiplos comprovantes)
     grouped_codigo = df.groupby("Código")
+
     for codigo, group in grouped_codigo:
         if len(group) == 1:
             resolved_rows.append(group)
@@ -126,45 +126,61 @@ def resolve_ambiguities(df):
             st.write(f"Ambiguidade para a conta com Código {codigo}:")
             options = {}
             for idx, row in group.iterrows():
-                # Formatação das datas (caso sejam válidas)
-                try:
-                    date_op_str = pd.to_datetime(row["Data da Operação"], dayfirst=True).strftime("%d/%m/%Y")
-                except Exception:
-                    date_op_str = "N/A"
-                try:
-                    date_ven_str = pd.to_datetime(row["Data Vencimento"], dayfirst=True).strftime("%d/%m/%Y")
-                except Exception:
-                    date_ven_str = "N/A"
-                option_str = f"Doc: {row['Número do Documento']} | Data Op: {date_op_str} | Data Ven: {date_ven_str}"
+                date_op = pd.to_datetime(row["Data da Operação"], dayfirst=True, errors="coerce")
+                date_ven = pd.to_datetime(row["Data Vencimento"], dayfirst=True, errors="coerce")
+
+                option_str = (f"Doc: {row['Número do Documento']} | "
+                              f"Data Op: {date_op.strftime('%d/%m/%Y') if pd.notnull(date_op) else 'N/A'} | "
+                              f"Data Ven: {date_ven.strftime('%d/%m/%Y') if pd.notnull(date_ven) else 'N/A'}")
+
                 options[option_str] = idx
+
             chosen = st.selectbox(f"Selecione o comprovante correto para a conta {codigo}:", list(options.keys()), key=f"select_codigo_{codigo}")
             chosen_idx = options[chosen]
-            resolved_rows.append(group.loc[[chosen_idx]])
+
+            # **Manter a conta não selecionada, mas zerar os dados do comprovante**
+            for idx, row in group.iterrows():
+                if idx == chosen_idx:
+                    resolved_rows.append(group.loc[[idx]])
+                else:
+                    row["Número do Documento"] = None
+                    row["Data da Operação"] = None
+                    row["Arquivo PDF"] = None
+                    resolved_rows.append(pd.DataFrame([row]))
+
     df_resolved = pd.concat(resolved_rows, ignore_index=True)
-    # Resolver por "Número do Documento" (um comprovante associado a várias contas)
-    duplicated_doc = df_resolved[df_resolved["Número do Documento"].notna() & df_resolved.duplicated(subset=["Número do Documento"], keep=False)]
-    if not duplicated_doc.empty:
-        grouped_doc = duplicated_doc.groupby("Número do Documento")
-        for doc, group in grouped_doc:
-            if len(group) > 1:
-                st.write(f"Ambiguidade para o comprovante {doc} associado a várias contas:")
-                options = {}
-                for idx, row in group.iterrows():
-                    try:
-                        date_op_str = pd.to_datetime(row["Data da Operação"], dayfirst=True).strftime("%d/%m/%Y")
-                    except Exception:
-                        date_op_str = "N/A"
-                    try:
-                        date_ven_str = pd.to_datetime(row["Data Vencimento"], dayfirst=True).strftime("%d/%m/%Y")
-                    except Exception:
-                        date_ven_str = "N/A"
-                    option_str = f"Código: {row['Código']} | Data Ven: {date_ven_str} | Data Op: {date_op_str}"
-                    options[option_str] = idx
-                chosen = st.selectbox(f"Selecione a conta correta para o comprovante {doc}:", list(options.keys()), key=f"select_doc_{doc}")
-                chosen_idx = options[chosen]
-                # Remove outras linhas com este comprovante
-                df_resolved = df_resolved.drop(group.index.difference([chosen_idx]))
-    return df_resolved
+
+    # Resolver ambiguidade para um comprovante associado a várias contas
+    grouped_doc = df_resolved[df_resolved["Número do Documento"].notna()].groupby("Número do Documento")
+
+    for doc, group in grouped_doc:
+        if len(group) > 1:
+            st.write(f"Ambiguidade para o comprovante {doc} associado a várias contas:")
+            options = {}
+            for idx, row in group.iterrows():
+                date_op = pd.to_datetime(row["Data da Operação"], dayfirst=True, errors="coerce")
+                date_ven = pd.to_datetime(row["Data Vencimento"], dayfirst=True, errors="coerce")
+
+                option_str = (f"Código: {row['Código']} | "
+                              f"Data Ven: {date_ven.strftime('%d/%m/%Y') if pd.notnull(date_ven) else 'N/A'} | "
+                              f"Data Op: {date_op.strftime('%d/%m/%Y') if pd.notnull(date_op) else 'N/A'}")
+
+                options[option_str] = idx
+
+            chosen = st.selectbox(f"Selecione a conta correta para o comprovante {doc}:", list(options.keys()), key=f"select_doc_{doc}")
+            chosen_idx = options[chosen]
+
+            # **Manter contas não selecionadas, mas remover o vínculo com o comprovante**
+            for idx, row in group.iterrows():
+                if idx == chosen_idx:
+                    continue  # Mantém a linha selecionada
+                else:
+                    row["Número do Documento"] = None
+                    row["Data da Operação"] = None
+                    row["Arquivo PDF"] = None
+                    resolved_rows.append(pd.DataFrame([row]))
+
+    return pd.concat(resolved_rows, ignore_index=True)
 
 # --- INTERFACE DO APLICATIVO ---
 
