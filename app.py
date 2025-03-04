@@ -273,9 +273,11 @@ if all_summary_data:
             
             # 5. Listar contas a pagar sem comprovante (verifica nulos ou strings vazias)
             df_contas_sem_comprovante = df_conciliado_final[
-                df_conciliado_final["Número do Documento"].isna() |
-                (df_conciliado_final["Número do Documento"].astype(str).str.strip().eq(""))
-            ]
+    df_conciliado_final["Número do Documento"].isna() | 
+    (df_conciliado_final["Número do Documento"].astype(str).str.strip() == "nan") |
+    (df_conciliado_final["Número do Documento"].astype(str).str.strip() == "") |
+    (df_conciliado_final["Número do Documento"].astype(str).str.strip().isna())
+]
             st.subheader("Contas a Pagar SEM Comprovante")
             st.dataframe(df_contas_sem_comprovante)
             csv_contas_sem = df_contas_sem_comprovante.to_csv(index=False, sep=";").encode()
