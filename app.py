@@ -278,15 +278,13 @@ if all_summary_data:
     (df_conciliado_final["Número do Documento"].astype(str).str.strip() == "") |
     (df_conciliado_final["Número do Documento"].astype(str).str.strip().isna())
 ]
-          st.subheader("📌 Contas a Pagar SEM Comprovante")
-
-if df_contas_sem_comprovante.empty:
-    st.warning("🚨 Nenhuma conta a pagar sem comprovante foi encontrada.")
-else:
-    st.dataframe(df_contas_sem_comprovante)
-
-    csv_contas_sem = df_contas_sem_comprovante.to_csv(index=False, sep=";").encode()
-    st.download_button("Baixar Contas SEM Comprovante (CSV)",
+            st.subheader("📌 Contas a Pagar SEM Comprovante")
+            if df_contas_sem_comprovante.empty:
+                st.warning("🚨 Nenhuma conta a pagar sem comprovante foi encontrada.")
+            else:
+                st.dataframe(df_contas_sem_comprovante)
+                csv_contas_sem = df_contas_sem_comprovante.to_csv(index=False, sep=";").encode()
+                st.download_button("Baixar Contas SEM Comprovante (CSV)",
                        data=csv_contas_sem,
                        file_name="contas_sem_comprovante.csv",
                        mime="text/csv",
