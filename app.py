@@ -187,9 +187,9 @@ if all_summary_data:
     if contas_file:
         df_contas = pd.read_csv(contas_file, sep=";", dtype=str)
         # A planilha deve conter as colunas obrigatórias
-        required_cols = ["Empresa", "Fornecedor", "Data Vencimento", "Valor", "Código"]
+        required_cols = ["Empresa", "Fornecedor", "Vencimento", "Valor", "Codigo"]
         if not all(col in df_contas.columns for col in required_cols):
-            st.error("A planilha de contas a pagar deve conter as colunas: Empresa, Fornecedor, Data Vencimento, Valor e Código.")
+            st.error("A planilha de contas a pagar deve conter as colunas: Empresa, Fornecedor, Vencimento, Valor e Codigo.")
         else:
             # Padroniza e converte os dados para facilitar a conciliação
             df_comprovantes_std = df_comprovantes.copy()
