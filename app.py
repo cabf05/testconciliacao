@@ -271,6 +271,13 @@ if all_summary_data:
                                mime="text/csv",
                                key="download_conciliado_inicial")
             
+            st.subheader("📌 Depuração: Exibir a tabela conciliada final")
+            st.write("Número de linhas na tabela conciliada:", df_conciliado_final.shape[0])
+            st.dataframe(df_conciliado_final)
+            
+            st.subheader("📌 Valores únicos na coluna 'Número do Documento'")
+            st.write(df_conciliado_final["Número do Documento"].unique())
+            
             # 5. Listar contas a pagar sem comprovante (verifica nulos ou strings vazias)
             df_contas_sem_comprovante = df_conciliado_final[
             df_conciliado_final["Número do Documento"].isna() | 
