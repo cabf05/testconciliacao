@@ -8,57 +8,45 @@ from io import BytesIO
 from fuzzywuzzy import fuzz as fuzzywuzzy_fuzz
 from rapidfuzz import fuzz as rapidfuzz_fuzz
 
-# --- FUNÇÕES DE EXTRAÇÃO E SALVAMENTO DE COMPROVANTES ---
-
+# Função para extrair transações do PDF
 def extract_transactions(pdf_document):
-    """
-    Extrai os dados dos comprovantes de cada página do PDF.
-    Retorna uma lista de tuplas (número da página, nome do arquivo) e 
-    uma lista de dicionários para o resumo.
-    """
     transactions = []
     summary_data = []
     
     for page_num in range(len(pdf_document)):
         page = pdf_document[page_num]
         text = page.get_text("text")
-        
-        # Regex para capturar os dados:
-        # - Empresa: <empresa> | CNPJ: ...
-        # - Nome do favorecido: <favorecido>
-        # - Data da operação: <data> - <hora>
-        # - N° de controle: <número> |
-        # - Valor R$ <valor>
+
+        # Regex para capturar as informações principais da transação
         match = re.search(
             r"Empresa:\s*(.*?)\s*\|\s*CNPJ: .*?\n"
             r"Nome do favorecido:\s*(.*?)\n"
             r".*?Data da operação:\s*(\d{2}/\d{2}/\d{4}) - \d{2}h\d{2}\n"
-            r"N° de controle:\s*(\d+)\s*\|",
+            r"N° de controle:\s*(\d+)\s*\|",  # Captura o número do documento (comprovante)
             text, re.DOTALL
         )
-        match_valor = re.search(r"Valor\s*R\$\s*([\d,.]+)", text)
+        
+        match_valor = re.search(r"Valor\s*R\$\s*([\d,.]+)", text)  # Captura o valor da transação
         
         if match and match_valor:
-            empresa = match.group(1).strip()
-            fornecedor = match.group(2).strip()
-            data_operacao = match.group(3).strip()
-            numero_documento = match.group(4).strip()
-            valor_str = match_valor.group(1).strip().replace(",", ".")
-            try:
-                valor = float(valor_str)
-            except:
-                valor = 0.0
-            file_name = f"{empresa.replace(' ', '_')}_para_{fornecedor.replace(' ', '_')}_{data_operacao.replace('/', '-')}_R${valor:.2f}.pdf"
-            
+            pagador = match.group(1).strip()
+            favorecido = match.group(2).strip()
+            data = match.group(3)
+            numero_documento = match.group(4)  # Número do comprovante
+            valor = match_valor.group(1).replace(",", ".")
+
+            file_name = f"{pagador.replace(' ', '_')}_para_{favorecido.replace(' ', '_')}_{data}_R${valor}.pdf"
             transactions.append((page_num, file_name))
+
             summary_data.append({
-                "Empresa": empresa,
-                "Fornecedor": fornecedor,
-                "Data da Operação": data_operacao,
-                "Valor": valor,
+                "Empresa": pagador,
+                "Fornecedor": favorecido,
+                "Data da Operação": data,
+                "Valor": float(valor.replace("R$ ", "").replace(",", ".")),  # Convertendo para número
                 "Número do Documento": numero_documento,
                 "Arquivo PDF": file_name
             })
+
     return transactions, summary_data
 
 def save_transaction_pdfs(pdf_document, transactions):
