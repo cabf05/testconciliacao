@@ -168,6 +168,7 @@ if uploaded_files:
             st.warning(f"Nenhum comprovante encontrado em {uploaded_file.name}.")
 
 if all_summary_data:
+    # Cria o DataFrame dos comprovantes extraídos
     df_comprovantes = pd.DataFrame(all_summary_data)
     st.subheader("Resumo dos Comprovantes Bancários")
     st.dataframe(df_comprovantes)
@@ -179,6 +180,11 @@ if all_summary_data:
         mime="text/csv",
         key="download_csv_comprovantes"
     )
+    
+    # Cria a versão padronizada do DataFrame de comprovantes
+    df_comprovantes_std = df_comprovantes.copy()
+    df_comprovantes_std = standardize_data(df_comprovantes_std, ["Empresa", "Fornecedor"])
+    df_comprovantes_std["Valor_std"] = df_comprovantes_std["Valor"].round(2)
 
     # 2. Upload da planilha de contas a pagar
     st.subheader("Upload da Planilha de Contas a Pagar")
@@ -192,10 +198,9 @@ if all_summary_data:
         if not all(col in df_contas.columns for col in required_cols):
             st.error("A planilha de contas a pagar deve conter as colunas: Empresa, Fornecedor, Data Vencimento, Valor e Código.")
         else:
-            # Padroniza e converte os dados para facilitar a conciliação
+            # Padroniza e converte os dados da planilha de contas a pagar
             df_contas_std = df_contas.copy()
             df_contas_std = standardize_data(df_contas_std, ["Empresa", "Fornecedor"])
-            # Garanta que a coluna 'Código' não possua espaços extras
             df_contas_std["Código"] = df_contas_std["Código"].astype(str).str.strip()
             df_contas_std["Valor"] = df_contas_std["Valor"].str.replace(r"r\$\s*", "", regex=True).str.replace(",", ".").astype(float)
             df_contas_std["Valor_std"] = df_contas_std["Valor"].round(2)
@@ -207,7 +212,7 @@ if all_summary_data:
             match_method = st.selectbox("Selecione o método de correspondência:", options=["Padrão", "Fuzzy Wuzzy", "RapidFuzz"])
             
             if match_method == "Padrão":
-                # Utilize os nomes das colunas conforme estão: "Empresa", "Fornecedor" e "Valor_std"
+                # Merge utilizando os nomes das colunas conforme padronizados
                 df_conciliado = pd.merge(
                     df_contas_std,
                     df_comprovantes_std,
