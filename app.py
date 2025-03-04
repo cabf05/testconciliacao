@@ -281,17 +281,21 @@ if all_summary_data:
             # Já que o merge garante que cada conta receba um único comprovante.
             
             # 5. Listar contas a pagar sem comprovante e comprovantes sem vínculo
-            df_contas_sem_comprovante = df_conciliado_final[df_conciliado_final["Número do Documento"].isna()]
-            st.subheader("Contas a Pagar SEM Comprovante")
-            st.dataframe(df_contas_sem_comprovante)
-            csv_contas_sem = df_contas_sem_comprovante.to_csv(index=False, sep=";").encode()
-            st.download_button(
-                "Baixar Contas SEM Comprovante (CSV)",
-                data=csv_contas_sem,
-                file_name="contas_sem_comprovante.csv",
-                mime="text/csv",
-                key="download_contas_sem"
-            )
+df_contas_sem_comprovante = df_conciliado_final[
+    df_conciliado_final["Número do Documento"].isna() | 
+    (df_conciliado_final["Número do Documento"].str.strip() == "")
+]
+st.subheader("Contas a Pagar SEM Comprovante")
+st.dataframe(df_contas_sem_comprovante)
+csv_contas_sem = df_contas_sem_comprovante.to_csv(index=False, sep=";").encode()
+st.download_button(
+    "Baixar Contas SEM Comprovante (CSV)",
+    data=csv_contas_sem,
+    file_name="contas_sem_comprovante.csv",
+    mime="text/csv",
+    key="download_contas_sem"
+)
+
             
             linked_doc_numbers = df_conciliado_final["Número do Documento"].dropna().unique()
             df_receipts_sem_conta = df_comprovantes[~df_comprovantes["Número do Documento"].isin(linked_doc_numbers)]
